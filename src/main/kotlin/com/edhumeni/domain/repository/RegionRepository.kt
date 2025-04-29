@@ -1,6 +1,7 @@
 package com.edhumeni.domain.repository
 
 import com.edhumeni.domain.model.Region
+import com.edhumeni.domain.model.RegionStats
 import org.locationtech.jts.geom.Point
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
@@ -36,9 +37,18 @@ interface RegionRepository : JpaRepository<Region, UUID> {
             "FROM regions r", nativeQuery = true)
     fun findAllWithFarmerCount(): List<Any>
 
-    @Query(value = "SELECT r.*, " +
-            "(SELECT COUNT(*) FROM farmers f WHERE f.region_id = r.id) as farmer_count, " +
-            "(SELECT COUNT(*) FROM farmers f WHERE f.region_id = r.id AND f.needs_support = true) as farmers_needing_support " +
+    @Query(value = "SELECT r.id as id, r.name as name, r.province as province, r.district as district, " +
+            "(SELECT COUNT(*) FROM farmers f WHERE f.region_id = r.id) as farmerCount, " +
+            "(SELECT COUNT(*) FROM farmers f WHERE f.region_id = r.id AND f.needs_support = true) as supportCount " +
             "FROM regions r", nativeQuery = true)
-    fun findAllWithFarmerAndSupportCounts(): List<Any>
+    fun findAllWithFarmerAndSupportCounts(): List<RegionStats>
+
+    @Query(value = "SELECT r.name, COUNT(f.id) as farmer_count " +
+            "FROM regions r " +
+            "JOIN farmers f ON f.region_id = r.id " +
+            "GROUP BY r.name " +
+            "ORDER BY farmer_count DESC " +
+            "LIMIT :limit", nativeQuery = true)
+    fun findTopRegionsByFarmerCount(@Param("limit") limit: Int): List<Array<Any>>
+
 }

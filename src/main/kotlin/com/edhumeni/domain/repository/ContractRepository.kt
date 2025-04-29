@@ -35,23 +35,13 @@ interface ContractRepository : JpaRepository<Contract, UUID> {
     fun findByEndDateBefore(date: LocalDate): List<Contract>
 
     @Query("""
-    SELECT c FROM Contract c 
-    WHERE c.endDate < :date 
-    AND (SELECT COALESCE(SUM(d.quantityKg), 0) FROM Delivery d WHERE d.contract = c) < c.expectedDeliveryKg
-""")
+    SELECT DISTINCT c FROM Contract c 
+    LEFT JOIN c.deliveries d
+    WHERE c.endDate < :date
+    GROUP BY c
+    HAVING COALESCE(SUM(d.quantityKg), 0.0) < (c.expectedDeliveryKg * 0.8)
+    """)
     fun findExpiredContractsWithUnmetDeliveries(@Param("date") date: LocalDate): List<Contract>
-
-    @Query("""
-    SELECT c FROM Contract c 
-    WHERE c.active = true 
-    AND c.endDate >= :today 
-    AND (SELECT COALESCE(SUM(d.quantityKg), 0) FROM Delivery d WHERE d.contract = c) < (c.expectedDeliveryKg * 0.8) 
-    AND c.endDate <= :thirtyDaysLater
-""")
-    fun findAtRiskContracts(
-        @Param("today") today: LocalDate,
-        @Param("thirtyDaysLater") thirtyDaysLater: LocalDate
-    ): List<Contract>
 
     @Query("SELECT c FROM Contract c WHERE " +
             "(:farmerId IS NULL OR c.farmer.id = :farmerId) AND " +
@@ -64,4 +54,50 @@ interface ContractRepository : JpaRepository<Contract, UUID> {
         @Param("active") active: Boolean?,
         @Param("repaymentStatus") repaymentStatus: RepaymentStatus?
     ): List<Contract>
+
+    fun findByEndDateAfterAndActive(endDate: LocalDate, active: Boolean): List<Contract>
+
+    @Query("""
+    SELECT DISTINCT c FROM Contract c 
+    LEFT JOIN c.deliveries d
+    WHERE c.active = true 
+    AND c.endDate >= :today 
+    AND c.endDate <= :thirtyDaysLater
+    GROUP BY c
+    HAVING COALESCE(SUM(d.quantityKg), 0.0) < (c.expectedDeliveryKg * 0.8)
+    """)
+    fun findAtRiskContracts(
+        @Param("today") today: LocalDate,
+        @Param("thirtyDaysLater") thirtyDaysLater: LocalDate
+    ): List<Contract>
+
+
+    //fun findByEndDateBeforeAndCompletedFalse(date: LocalDate): List<Contract>
+
+
+    @Query("""
+    SELECT
+        FUNCTION('YEAR', c.startDate) as year,
+        FUNCTION('MONTH', c.startDate) as month,
+        COUNT(c) as count,
+        SUM(c.expectedDeliveryKg) as expectedTotal,
+        COALESCE(SUM(d.quantityKg), 0.0) as deliveredTotal
+    FROM Contract c
+    LEFT JOIN c.deliveries d
+    WHERE c.startDate BETWEEN :startDate AND :endDate
+    GROUP BY FUNCTION('YEAR', c.startDate), FUNCTION('MONTH', c.startDate)
+    ORDER BY FUNCTION('YEAR', c.startDate), FUNCTION('MONTH', c.startDate)
+    """)
+    fun getContractTrendByMonth(
+        @Param("startDate") startDate: LocalDate,
+        @Param("endDate") endDate: LocalDate
+    ): List<Array<Any>>
+
+    @Query("""
+SELECT c FROM Contract c
+WHERE c.active = true
+AND c.endDate >= :today
+AND :today > c.startDate
+""")
+fun findPotentialContractsBehindSchedule(@Param("today") today: LocalDate): List<Contract>
 }

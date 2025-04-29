@@ -156,4 +156,32 @@ class ContractController(
             return ResponseEntity.status(HttpStatus.CONFLICT).build()
         }
     }
+
+    @GetMapping("/behind-schedule")
+    @Operation(summary = "Get contracts behind schedule", description = "Retrieves contracts that are behind their expected delivery schedule")
+    fun getContractsBehindSchedule(): ResponseEntity<List<ContractResponse>> {
+        val contracts = contractService.findContractsBehindSchedule()
+        return ResponseEntity.ok(contracts.map { contractMapper.toResponse(it) })
+    }
+
+    @GetMapping("/trends")
+    @Operation(summary = "Get contract trends", description = "Retrieves contract completion trends by month")
+    fun getContractTrends(@RequestParam(defaultValue = "12") months: Int): ResponseEntity<List<Map<String, Any>>> {
+        val trends = contractService.getContractCompletionTrends(months)
+        return ResponseEntity.ok(trends)
+    }
+
+    @GetMapping("/insights")
+    @Operation(summary = "Get contract insights", description = "Retrieves insights about contract performance for decision making")
+    fun getContractInsights(): ResponseEntity<Map<String, Any>> {
+        val insights = contractService.getContractInsights()
+        return ResponseEntity.ok(insights)
+    }
+
+    @GetMapping("/recommendations/{farmerId}")
+    @Operation(summary = "Get contract recommendations", description = "Recommends contract adjustments based on farmer performance")
+    fun getContractRecommendations(@PathVariable farmerId: UUID): ResponseEntity<Map<String, Any>> {
+        val recommendations = contractService.recommendContractAdjustments(farmerId)
+        return ResponseEntity.ok(recommendations)
+    }
 }

@@ -56,3 +56,12 @@ data class Region(
     // Function to get farmer count for map display
     fun getFarmerCount(): Int = farmers.size
 }
+
+interface RegionStats {
+    fun getId(): UUID
+    fun getName(): String
+    fun getProvince(): String
+    fun getDistrict(): String
+    fun getFarmerCount(): Long
+    fun getSupportCount(): Long
+}

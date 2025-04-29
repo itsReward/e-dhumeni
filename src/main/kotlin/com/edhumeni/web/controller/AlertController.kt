@@ -4,9 +4,11 @@ import com.edhumeni.application.dto.response.AlertSummaryResponse
 import com.edhumeni.application.dto.response.FarmerResponse
 import com.edhumeni.application.mapper.FarmerMapper
 import com.edhumeni.domain.service.AlertService
+import com.edhumeni.domain.service.FarmerService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.http.ResponseEntity
+import org.springframework.security.core.Authentication
 import org.springframework.web.bind.annotation.*
 import java.util.UUID
 
@@ -15,7 +17,8 @@ import java.util.UUID
 @Tag(name = "Support Alerts", description = "Endpoints for managing farmer support alerts")
 class AlertController(
     private val alertService: AlertService,
-    private val farmerMapper: FarmerMapper
+    private val farmerMapper: FarmerMapper,
+    private val farmerService: FarmerService,
 ) {
 
     @GetMapping("/farmers")
@@ -45,6 +48,16 @@ class AlertController(
     )
     fun getFarmersWithRepaymentIssues(): ResponseEntity<List<FarmerResponse>> {
         val farmers = alertService.findFarmersWithRepaymentIssues()
+        return ResponseEntity.ok(farmers.map { farmerMapper.toResponse(it) })
+    }
+
+    @GetMapping("/farmers/high-priority")
+    @Operation(
+        summary = "Get high priority farmers",
+        description = "Retrieves farmers that need immediate attention based on multiple criteria"
+    )
+    fun getHighPriorityFarmers(): ResponseEntity<List<FarmerResponse>> {
+        val farmers = alertService.getHighPriorityFarmers()
         return ResponseEntity.ok(farmers.map { farmerMapper.toResponse(it) })
     }
 
@@ -81,9 +94,9 @@ class AlertController(
         summary = "Get alert summary statistics",
         description = "Retrieves summary statistics for all support alerts"
     )
-    fun getAlertSummary(): ResponseEntity<AlertSummaryResponse> {
+    fun getAlertSummary(): ResponseEntity<Map<String, Any>> {
         val summary = alertService.getSupportAlertSummary()
-        return ResponseEntity.ok(AlertSummaryResponse(summary))
+        return ResponseEntity.ok(summary)
     }
 
     @PostMapping("/assess")
@@ -91,8 +104,8 @@ class AlertController(
         summary = "Run assessment for all farmers",
         description = "Runs the support needs assessment algorithm on all farmers"
     )
-    fun runSupportAssessment(): ResponseEntity<Map<String, Any>> {
-        alertService.assessAllFarmersForSupport()
+    fun runSupportAssessment(authentication: Authentication): ResponseEntity<Map<String, Any>> {
+        alertService.assessAllFarmersForSupport(authentication.name)
 
         val summary = alertService.getSupportAlertSummary()
         return ResponseEntity.ok(mapOf(
@@ -109,9 +122,10 @@ class AlertController(
     )
     fun markFarmerForSupport(
         @PathVariable id: UUID,
-        @RequestParam reason: String
+        @RequestParam reason: String,
+        authentication: Authentication
     ): ResponseEntity<FarmerResponse> {
-        val farmer = alertService.markFarmerNeedsSupport(id, reason)
+        val farmer = alertService.markFarmerNeedsSupport(id, reason, authentication.name)
         return ResponseEntity.ok(farmerMapper.toResponse(farmer))
     }
 
@@ -122,9 +136,10 @@ class AlertController(
     )
     fun resolveFarmerSupport(
         @PathVariable id: UUID,
-        @RequestParam resolutionNotes: String
+        @RequestParam resolutionNotes: String,
+        authentication: Authentication
     ): ResponseEntity<FarmerResponse> {
-        val farmer = alertService.resolveSupport(id, resolutionNotes)
+        val farmer = alertService.resolveSupport(id, resolutionNotes, authentication.name)
         return ResponseEntity.ok(farmerMapper.toResponse(farmer))
     }
 
@@ -133,23 +148,30 @@ class AlertController(
         summary = "Assess individual farmer",
         description = "Runs the support needs assessment for a specific farmer"
     )
-    fun assessIndividualFarmer(@PathVariable id: UUID): ResponseEntity<Map<String, Any>> {
-        val farmerService = com.edhumeni.domain.service.FarmerService(
-            com.edhumeni.domain.repository.FarmerRepository(),
-            com.edhumeni.domain.repository.RegionRepository(),
-            com.edhumeni.domain.repository.AeoRepository()
-        )
-
+    fun assessIndividualFarmer(
+        @PathVariable id: UUID,
+        authentication: Authentication
+    ): ResponseEntity<Map<String, Any>> {
         val farmer = farmerService.findById(id)
             ?: return ResponseEntity.notFound().build()
 
         val assessmentResult = alertService.assessIndividualFarmerForSupport(farmer)
 
+        // Update the farmer's support status based on assessment
+        if (assessmentResult.first) {
+            alertService.markFarmerNeedsSupport(id, assessmentResult.second ?: "Unknown", authentication.name)
+        } else if (farmer.needsSupport) {
+            alertService.resolveSupport(id, "Automatically resolved through assessment", authentication.name)
+        }
+
         return ResponseEntity.ok(mapOf(
             "farmerId" to farmer.id,
             "farmerName" to farmer.name,
             "needsSupport" to assessmentResult.first,
-            "supportReason" to assessmentResult.second
+            "supportReason" to (assessmentResult.second ?: "N/A"),
+            "assessedBy" to authentication.name,
+            "assessedAt" to java.time.LocalDateTime.now()
         ))
     }
+
 }

@@ -73,6 +73,6 @@ tasks.withType<Test> {
 
 flyway {
     url = System.getenv("SPRING_DATASOURCE_URL") ?: "jdbc:postgresql://localhost:5432/edhumeni"
-    user = System.getenv("SPRING_DATASOURCE_USERNAME") ?: "postgres"
-    password = System.getenv("SPRING_DATASOURCE_PASSWORD") ?: "postgres"
+    user = System.getenv("SPRING_DATASOURCE_USERNAME") ?: "dev"
+    password = System.getenv("SPRING_DATASOURCE_PASSWORD") ?: "development"
 }

@@ -21,17 +21,17 @@ data class User(
     private var password: String,
 
     @Column(nullable = false, unique = true)
-    val email: String,
+    var email: String,
 
     @Column(name = "full_name", nullable = false)
-    val fullName: String,
+    var fullName: String,
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
-    val role: UserRole,
+    var role: UserRole,
 
     @Column(nullable = false)
-    val enabled: Boolean = true,
+    var enabled: Boolean = true,
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),

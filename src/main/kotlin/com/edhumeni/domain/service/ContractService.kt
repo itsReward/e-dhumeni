@@ -10,6 +10,7 @@ import org.springframework.data.repository.findByIdOrNull
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @Service
@@ -214,6 +215,239 @@ class ContractService(
                 java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), contract.endDate)
             } else 0,
             "deliveriesCount" to contract.deliveries.size
+        )
+    }
+
+    /**
+     * Find contracts that are behind their expected delivery schedule
+     */
+    fun findContractsBehindSchedule(): List<Contract> {
+        val today = LocalDate.now()
+        val potentialContracts = contractRepository.findPotentialContractsBehindSchedule(today)
+        return potentialContracts.filter { it.isBehindSchedule() }
+    }
+
+    /**
+     * Get contract completion trends by month
+     */
+    fun getContractCompletionTrends(months: Int = 12): List<Map<String, Any>> {
+        val today = LocalDate.now()
+        val startDate = today.minusMonths(months.toLong())
+
+        val trends = contractRepository.getContractTrendByMonth(startDate, today)
+
+        return trends.map { result ->
+            val year = result[0] as Int
+            val month = result[1] as Int
+            val count = result[2] as Long
+            val expectedTotal = result[3] as Double
+            val deliveredTotal = result[4] as Double
+
+            val completionRate = if (expectedTotal > 0) {
+                (deliveredTotal / expectedTotal) * 100
+            } else {
+                0.0
+            }
+
+            mapOf(
+                "year" to year,
+                "month" to month,
+                "periodLabel" to "$year-${month.toString().padStart(2, '0')}",
+                "contractCount" to count,
+                "expectedDeliveryKg" to expectedTotal,
+                "actualDeliveryKg" to deliveredTotal,
+                "completionRate" to completionRate
+            )
+        }
+    }
+
+    /**
+     * Get contract insights for decision making
+     */
+    fun getContractInsights(): Map<String, Any> {
+        val today = LocalDate.now()
+        val allContracts = contractRepository.findAll()
+        val activeContracts = allContracts.filter { it.active && it.endDate.isAfter(today) }
+
+        // Find contracts by their performance
+        val contractsByPerformance = activeContracts.groupBy { contract ->
+            val completionPercent = contract.getDeliveryCompletionPercentage()
+            val timeElapsedPercent = calculateTimeElapsedPercentage(contract)
+
+            when {
+                completionPercent >= timeElapsedPercent + 10 -> "AHEAD_OF_SCHEDULE"
+                completionPercent >= timeElapsedPercent - 10 -> "ON_SCHEDULE"
+                completionPercent < timeElapsedPercent - 30 -> "SEVERELY_BEHIND"
+                else -> "BEHIND_SCHEDULE"
+            }
+        }
+
+        // Calculate performance by contract type
+        val performanceByContractType = ContractType.values().associateWith { type ->
+            val typeContracts = activeContracts.filter { it.type == type }
+            if (typeContracts.isEmpty()) {
+                mapOf(
+                    "count" to 0,
+                    "totalExpectedKg" to 0.0,
+                    "totalDeliveredKg" to 0.0,
+                    "avgCompletionRate" to 0.0,
+                    "onTrackPercentage" to 0.0
+                )
+            } else {
+                val avgCompletionRate = typeContracts.map { it.getDeliveryCompletionPercentage() }.average()
+                val onTrackCount = typeContracts.count {
+                    val completionPercent = it.getDeliveryCompletionPercentage()
+                    val timeElapsedPercent = calculateTimeElapsedPercentage(it)
+                    completionPercent >= timeElapsedPercent - 10
+                }
+
+                mapOf(
+                    "count" to typeContracts.size,
+                    "totalExpectedKg" to typeContracts.sumOf { it.expectedDeliveryKg },
+                    "totalDeliveredKg" to typeContracts.sumOf { it.getTotalDeliveredKg() },
+                    "avgCompletionRate" to avgCompletionRate,
+                    "onTrackPercentage" to (onTrackCount.toDouble() / typeContracts.size) * 100
+                )
+            }
+        }
+
+        // Find soon-to-expire contracts that are behind
+        val criticalContracts = activeContracts.filter { contract ->
+            val daysToExpiry = ChronoUnit.DAYS.between(today, contract.endDate)
+            val completionPercent = contract.getDeliveryCompletionPercentage()
+
+            daysToExpiry <= 30 && completionPercent < 80
+        }.map { contract ->
+            mapOf(
+                "id" to contract.id,
+                "contractNumber" to contract.contractNumber,
+                "farmerName" to contract.farmer.name,
+                "farmerId" to contract.farmer.id,
+                "endDate" to contract.endDate,
+                "daysRemaining" to ChronoUnit.DAYS.between(today, contract.endDate),
+                "completionPercentage" to contract.getDeliveryCompletionPercentage(),
+                "region" to contract.farmer.region.name
+            )
+        }
+
+        return mapOf(
+            "totalActiveContracts" to activeContracts.size,
+            "contractsByPerformance" to contractsByPerformance.mapValues { it.value.size },
+            "performanceByContractType" to performanceByContractType,
+            "criticalContracts" to criticalContracts,
+            "generatedAt" to LocalDate.now()
+        )
+    }
+
+    /**
+     * Calculate what percentage of contract time has elapsed
+     */
+    private fun calculateTimeElapsedPercentage(contract: Contract): Double {
+        val today = LocalDate.now()
+
+        // If contract hasn't started yet, return 0
+        if (today.isBefore(contract.startDate)) {
+            return 0.0
+        }
+
+        // If contract has ended, return 100
+        if (today.isAfter(contract.endDate)) {
+            return 100.0
+        }
+
+        val totalDays = ChronoUnit.DAYS.between(contract.startDate, contract.endDate)
+        val elapsedDays = ChronoUnit.DAYS.between(contract.startDate, today)
+
+        return if (totalDays > 0) {
+            (elapsedDays.toDouble() / totalDays) * 100
+        } else {
+            // Same day contract (unusual case)
+            50.0
+        }
+    }
+
+    /**
+     * Recommend contract adjustments based on farmer performance
+     */
+    fun recommendContractAdjustments(farmerId: UUID): Map<String, Any> {
+        val farmer = farmerRepository.findByIdOrNull(farmerId)
+            ?: throw IllegalArgumentException("Farmer with ID $farmerId not found")
+
+        val contracts = contractRepository.findByFarmerId(farmerId)
+        val activeContracts = contracts.filter { it.active }
+        val completedContracts = contracts.filter { !it.active && it.getDeliveryCompletionPercentage() >= 100 }
+
+        // If no completed contracts, not enough data for recommendations
+        if (completedContracts.isEmpty()) {
+            return mapOf(
+                "farmerId" to farmerId,
+                "farmerName" to farmer.name,
+                "hasRecommendation" to false,
+                "message" to "Not enough historical contract data for recommendations",
+                "generatedAt" to LocalDate.now()
+            )
+        }
+
+        // Calculate average historical delivery performance
+        val avgDeliveryRate = completedContracts.map { it.getDeliveryCompletionPercentage() / 100 }.average()
+
+        // Check if farmer performs better with certain contract types
+        val performanceByType = completedContracts
+            .groupBy { it.type }
+            .mapValues { (_, contracts) ->
+                contracts.map { it.getDeliveryCompletionPercentage() / 100 }.average()
+            }
+
+        val bestPerformingType = performanceByType.maxByOrNull { it.value }
+
+        // Determine optimal contract size based on historical data
+        val avgDeliveryKg = completedContracts
+            .map { it.getTotalDeliveredKg() }
+            .average()
+
+        // Recommendations to build
+        val recommendations = mutableListOf<String>()
+        val adjustments = mutableMapOf<String, Any>()
+
+        // Recommend contract type
+        if (bestPerformingType != null && bestPerformingType.value > 0.95) {
+            recommendations.add("Farmer performs well with ${bestPerformingType.key} contracts (${bestPerformingType.value * 100}% completion rate)")
+            adjustments["recommendedType"] = bestPerformingType.key
+        }
+
+        // Recommend contract size
+        if (avgDeliveryRate < 0.8) {
+            // Farmer struggling to meet targets, recommend smaller contracts
+            val recommendedSize = avgDeliveryKg * 1.1 // 10% above proven capacity
+            recommendations.add("Farmer historically delivers an average of $avgDeliveryKg kg. Consider reducing contract size to ${recommendedSize.toInt()} kg.")
+            adjustments["recommendedSizeKg"] = recommendedSize
+        } else if (avgDeliveryRate > 0.95 && activeContracts.isNotEmpty()) {
+            // Farmer consistently meeting targets, could handle more
+            val currentSize = activeContracts.maxOfOrNull { it.expectedDeliveryKg } ?: 0.0
+            val recommendedSize = currentSize * 1.2 // 20% increase
+            recommendations.add("Farmer consistently meets targets. Consider increasing contract size to ${recommendedSize.toInt()} kg.")
+            adjustments["recommendedSizeKg"] = recommendedSize
+        }
+
+        // Consider payment structure adjustments
+        if (farmer.needsSupport && farmer.socialVulnerability == com.edhumeni.domain.model.VulnerabilityLevel.HIGH) {
+            recommendations.add("Consider increasing advance payment percentage to support farmer cash flow")
+            adjustments["recommendedAdvancePaymentIncrease"] = true
+        }
+
+        return mapOf(
+            "farmerId" to farmerId,
+            "farmerName" to farmer.name,
+            "hasRecommendation" to recommendations.isNotEmpty(),
+            "historicalPerformance" to mapOf(
+                "avgDeliveryRate" to avgDeliveryRate,
+                "avgDeliveryKg" to avgDeliveryKg,
+                "completedContractCount" to completedContracts.size,
+                "performanceByType" to performanceByType
+            ),
+            "recommendations" to recommendations,
+            "adjustments" to adjustments,
+            "generatedAt" to LocalDate.now()
         )
     }
 }

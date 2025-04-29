@@ -31,7 +31,14 @@ class SecurityConfig(private val jwtTokenProvider: JwtTokenProvider) {
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests { auth ->
                 auth
-                    .requestMatchers("/auth/**", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                    .requestMatchers(
+                        "/auth/**",
+                        "/api-docs/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html"
+                    ).permitAll()
+                    // Allow offline sync endpoints with appropriate authentication
+                    .requestMatchers("/api/sync/**").authenticated()
                     .anyRequest().authenticated()
             }
             .addFilterBefore(

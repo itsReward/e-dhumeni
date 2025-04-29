@@ -68,4 +68,15 @@ interface DeliveryRepository : JpaRepository<Delivery, UUID> {
         @Param("startDate") startDate: LocalDateTime,
         @Param("endDate") endDate: LocalDateTime
     ): Double?
+
+    @Query("SELECT SUM(d.quantityKg) FROM Delivery d WHERE d.contract.id IN :contractIds")
+    fun sumQuantityByContractIds(@Param("contractIds") contractIds: List<UUID>): Double?
+
+    @Query("SELECT CAST(d.deliveryDate AS date) as deliveryDate, SUM(d.quantityKg) as totalQuantity " +
+            "FROM Delivery d " +
+            "WHERE d.deliveryDate >= :startDate " +
+            "GROUP BY CAST(d.deliveryDate AS date) " +
+            "ORDER BY deliveryDate")
+    fun findDeliveryTrendByDay(@Param("startDate") startDate: LocalDateTime): List<Array<Any>>
+
 }
